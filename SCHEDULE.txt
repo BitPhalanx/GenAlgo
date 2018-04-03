@@ -1,0 +1,10 @@
+Team One-3-Y-2,2-9-18
+Team Two-1-X-1-0-0
+Team Three-2-X-3-9-18
+Team Four-3-N-1,2-0-0
+Team Five-3-Y-3,3-8-0
+Team Six-3-Y-1,1-0-0
+Team Seven-3-N-3,3-0-0
+Team Eight-3-N-2,2-0-0
+Team Nine-3-Y-3,1-0-0
+Team Ten-3-N-1,1-0-0
