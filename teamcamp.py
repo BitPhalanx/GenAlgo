@@ -18,11 +18,11 @@ from deap import tools
 
 # USER EDITABLE VARIABLES
 # HyperParameters for GA:
-num_of_gens = 5 # 40
-pop_size = 5 #100
+num_of_gens = 50
+pop_size = 500
 tour_size = 3
-mutpb = 1.0 # 0.2
-cxpb = 0.5
+mutpb = 0.15 
+cxpb = 0.2
 
 # Schedule Parameters:
 day1_start = 8 # Time in 24hr format by the hour
@@ -49,11 +49,13 @@ day2_slots = day2_end - day2_start
 tot_slots = day1_slots + day2_slots
 
 lvl_and_rank = [] # Store if V or JV, and rank of team
+glo_conf_list = [] # Store conflict list globally for CX to access
 
 ########################################################################
 # Custom Crossover Function. 
 # Typical crossover functions will not work well for our structure, so 
-# a custom way to breed 2 schedules is desired.
+# a custom way to breed 2 schedules is desired. Explanation provided at
+# end of function.
 ########################################################################
 def schedule_cx(schedule1, schedule2):
     # This will follow a similar structure to our initial schedule
@@ -61,12 +63,271 @@ def schedule_cx(schedule1, schedule2):
     # Indexes to our population are as follows:
     # schedule[TimeSegment][Court][TeamSide]
 
-    return schedule1, schedule2
-    # Randomly pick a team, and locate it in first parent schedule.
-    # Place all their scheduled times into new child schedule. Randomly
-    # select another team, and copy it's schedule from the 2nd parent
-    # into new child. Mend schedules if there is a conflict, but keep as
-    # similar to the parent being adopted from as possible.
+    # Create references to schedules 1 and 2
+    sch1 = schedule1
+    sch2 = schedule2
+
+    # print("Schedule 1: \n", schedule1)
+    # print("Schedule 2: \n", schedule2)
+
+    # Extract a team order from each parent schedule
+    sch1_order = []
+    sch2_order = []
+    for x in sch1:
+        for y in x:
+            for z in y:
+                if not z == 0:
+                    if z not in sch1_order:
+                        sch1_order.append(z)
+    for x in sch2:
+        for y in x:
+            for z in y:
+                if not z == 0:
+                    if z not in sch2_order:
+                        sch2_order.append(z)
+
+    # print("Sch1: \n", sch1_order)
+    # print("Sch2: \n", sch2_order)
+
+    child1_order = []
+    child2_order = []
+    # Switch between 1 and 2, and select the first teams that show up,
+    # until we have a new team order to populate a schedule with
+    count = 0
+    which_sch = 1
+    while count < num_of_teams:
+        if which_sch == 1:
+            for x in sch1_order:
+                if x not in child1_order:
+                    child1_order.append(x)
+                    which_sch = 2
+                    count += 1
+                    break
+        elif which_sch == 2:
+            for x in sch2_order:
+                if x not in child1_order:
+                    child1_order.append(x)
+                    which_sch = 1
+                    count += 1
+                    break
+
+    count = 0
+    which_sch = 2
+    while count < num_of_teams:
+        if which_sch == 1:
+            for x in sch1_order:
+                if x not in child2_order:
+                    child2_order.append(x)
+                    which_sch = 2
+                    count += 1
+                    break
+        elif which_sch == 2:
+            for x in sch2_order:
+                if x not in child2_order:
+                    child2_order.append(x)
+                    which_sch = 1
+                    count += 1
+                    break
+    # print("Child 1 New Order: \n", child1_order)
+    # print("Child 2 New Order: \n", child2_order)
+
+    # ZERO OUT our original schedules to prepare them for population
+    for i, x in enumerate(sch1):
+        for j, y in enumerate(x):
+            for k, z in enumerate(y):
+                sch1[i][j][k] = 0
+                sch2[i][j][k] = 0
+
+    # Now iterate through schedule 1 and 2, changing their order
+    # into our new team orders child1 and child2 respectively
+
+    # CHILD 1!!!
+    # List to hold already scheduled teams for conflict
+    already_scheduled = []
+    # Start iterating through team_order_list and populating schedule
+    for team in child1_order:
+        # Team may have already been scheduled due to conflict, check list
+        if team not in already_scheduled: 
+            # Check if team is in our conflict list. If so, schedule its 
+            # conflict at the same time for simplicity
+            conflicting = 0
+            for match in glo_conf_list:
+                if team in match:
+                    if team == match[0]:
+                        conflicting = match[1]
+                    else:
+                        conflicting = match[0]
+            if (conflicting != 0):
+                # print("Conflict exists for team: ", team, " and is: ", conflicting)
+                already_scheduled.append(team)
+                already_scheduled.append(conflicting)
+                # Schedule 3 games per conflicting team
+                rem_mat_team = 3
+                rem_mat_conf = 3
+                pick_t_or_c = 1
+                prev_played_team = []
+                prev_played_conf = []
+                # Find spots to place teams in the schedule
+                for x,i in enumerate(sch1):
+                    if rem_mat_conf == 0:
+                        # All 6 games have been scheduled, break
+                        break
+                    for y,j in enumerate(i):
+                        if j[0] == 0:
+                            #Empty slot, schedule game here
+                            if pick_t_or_c == 1:
+                                sch1[x][y][0] = team
+                                rem_mat_team -= 1
+                                pick_t_or_c = 2
+                                break
+                            elif pick_t_or_c == 2:
+                                sch1[x][y][0] = conflicting
+                                rem_mat_conf -= 1
+                                pick_t_or_c = 1
+                                break
+                        elif j[1] == 0:
+                            #Finish team matchup, schedule here
+                            if pick_t_or_c == 1:
+                                # Only match if team wasn't previously played
+                                if j[0] not in prev_played_team:
+                                    sch1[x][y][1] = team
+                                    # Keep track of previously played teams
+                                    prev_played_team.append(j[0])
+                                    rem_mat_team -= 1
+                                    pick_t_or_c = 2
+                                    break
+                            elif pick_t_or_c == 2:
+                                # Only match if conf wasn't previously played
+                                if j[0] not in prev_played_conf:
+                                    sch1[x][y][1] = conflicting
+                                    # Keep track of previously played teams
+                                    prev_played_conf.append(j[0])
+                                    rem_mat_conf -= 1
+                                    pick_t_or_c = 1
+                                    break
+            else:
+                # print("No conflict for team: ", team)
+                # No need to append to already_scheduled since singular
+                rem_mat_team = 3
+                prev_played = []
+                for x,i in enumerate(sch1):
+                    if rem_mat_team == 0:
+                        # All 3 games have been scheduled, break
+                        break
+                    for y, j in enumerate(i):
+                        if j[0] == 0:
+                            #Empty slot, schedule game here
+                            sch1[x][y][0] = team
+                            rem_mat_team -= 1
+                            break
+                        elif j[1] == 0:
+                            # Only match if previously unplayed team
+                            if j[0] not in prev_played:
+                                #Finish team matchup, schedule here
+                                sch1[x][y][1] = team
+                                prev_played.append(j[0])
+                                rem_mat_team -= 1
+                                break
+        # else:
+            # print("Team already scheduled: ", team)
+    # print("New Child 1: \n", sch1)
+
+
+    # CHILD 2!!!
+    # List to hold already scheduled teams for conflict
+    already_scheduled = []
+    # Start iterating through team_order_list and populating schedule
+    for team in child2_order:
+        # Team may have already been scheduled due to conflict, check list
+        if team not in already_scheduled: 
+            # Check if team is in our conflict list. If so, schedule its 
+            # conflict at the same time for simplicity
+            conflicting = 0
+            for match in glo_conf_list:
+                if team in match:
+                    if team == match[0]:
+                        conflicting = match[1]
+                    else:
+                        conflicting = match[0]
+            if (conflicting != 0):
+                # print("Conflict exists for team: ", team, " and is: ", conflicting)
+                already_scheduled.append(team)
+                already_scheduled.append(conflicting)
+                # Schedule 3 games per conflicting team
+                rem_mat_team = 3
+                rem_mat_conf = 3
+                pick_t_or_c = 1
+                prev_played_team = []
+                prev_played_conf = []
+                # Find spots to place teams in the schedule
+                for x,i in enumerate(sch2):
+                    if rem_mat_conf == 0:
+                        # All 6 games have been scheduled, break
+                        break
+                    for y,j in enumerate(i):
+                        if j[0] == 0:
+                            #Empty slot, schedule game here
+                            if pick_t_or_c == 1:
+                                sch2[x][y][0] = team
+                                rem_mat_team -= 1
+                                pick_t_or_c = 2
+                                break
+                            elif pick_t_or_c == 2:
+                                sch2[x][y][0] = conflicting
+                                rem_mat_conf -= 1
+                                pick_t_or_c = 1
+                                break
+                        elif j[1] == 0:
+                            #Finish team matchup, schedule here
+                            if pick_t_or_c == 1:
+                                # Only match if team wasn't previously played
+                                if j[0] not in prev_played_team:
+                                    sch2[x][y][1] = team
+                                    # Keep track of previously played teams
+                                    prev_played_team.append(j[0])
+                                    rem_mat_team -= 1
+                                    pick_t_or_c = 2
+                                    break
+                            elif pick_t_or_c == 2:
+                                # Only match if conf wasn't previously played
+                                if j[0] not in prev_played_conf:
+                                    sch2[x][y][1] = conflicting
+                                    # Keep track of previously played teams
+                                    prev_played_conf.append(j[0])
+                                    rem_mat_conf -= 1
+                                    pick_t_or_c = 1
+                                    break
+            else:
+                # print("No conflict for team: ", team)
+                # No need to append to already_scheduled since singular
+                rem_mat_team = 3
+                prev_played = []
+                for x,i in enumerate(sch2):
+                    if rem_mat_team == 0:
+                        # All 3 games have been scheduled, break
+                        break
+                    for y, j in enumerate(i):
+                        if j[0] == 0:
+                            #Empty slot, schedule game here
+                            sch2[x][y][0] = team
+                            rem_mat_team -= 1
+                            break
+                        elif j[1] == 0:
+                            # Only match if previously unplayed team
+                            if j[0] not in prev_played:
+                                #Finish team matchup, schedule here
+                                sch2[x][y][1] = team
+                                prev_played.append(j[0])
+                                rem_mat_team -= 1
+                                break
+    # print("New Child 2: \n", sch2)
+
+    return sch1, sch2
+    # Extract sequence of teams from both parent schedules. To generate
+    # a new sequence for each child, swich between the two parents,
+    # making sure not to repeat any teams already added. Once both child
+    # sequences are created, zero out schedule 1 and 2 to prepare them
+    # for population, then generate their new respective schedules.
 
 ########################################################################
 # Similar to CX, mutation needs to be a custom function to prevent
@@ -74,29 +335,30 @@ def schedule_cx(schedule1, schedule2):
 # pick two teams and swap their schedules.
 # WARNING: This can cause conflicting teams to play at same time,
 # punish that in fitness function
-# #TODO SCHEDULE IS NOT ACTUALLY BEING MODIFIED
 ########################################################################
 def schedule_mut(schedule):
     # pick 2 teams randomly
     # Create reference to schedule
     mutating_local = schedule
     team_order_list = random.sample(range(1,num_of_teams+1,1), k=2)
-    print("Before MUT: \n", mutating_local)
+    # print("Before MUT: \n", mutating_local)
     # swap them
-    for i in mutating_local:
-        for j in i:
-            for k in j:
-                if k == team_order_list[0]:
-                    print("k was: ", k, id(k))
-                    k = int(team_order_list[1])
-                    print("k is: ", k, id(k))
-                elif k == team_order_list[1]:
-                    k = team_order_list[0]
-    print("After MUT: \n", mutating_local)
+    for i, x in enumerate(mutating_local):
+        for j, y in enumerate(x):
+            for k, z in enumerate(y):
+                if z == team_order_list[0]:
+                    # print("z was: ", z, id(z))
+                    mutating_local[i][j][k] = int(team_order_list[1])
+                elif z == team_order_list[1]:
+                    # print("z was: ", z, id(z))
+                    mutating_local[i][j][k] = int(team_order_list[0])
+    # print("After MUT: \n", mutating_local)
     return mutating_local,
 
 ########################################################################
-# Our Fitness Function, determines how fit an individual is.
+# Our Fitness Function, determines how fit an individual is. Punish
+# unwanted but legal matchups lightly, and reward ideal matchups. 
+# Heavily punish illegal and incomplete schedules.
 ########################################################################
 def calc_fitness(individual):
     # Placeholder return for testing...
@@ -105,12 +367,21 @@ def calc_fitness(individual):
     # Iterate through each individual team and calculate fitness. 
     # Fitness is based on details below.
     total_fit = 0
+    # If there are any incomplete matches, penalize
+    for i in individual:
+        for j in i:
+            if (j[0] != 0) and (j[1] ==  0):
+                total_fit -= 50
     for i in range(1,num_of_teams+1,1):
         # Find i's matchup and determine if it's a good match.
         # +5 if it's an exact level match, +2 if it's only one
         # above or below. lvl_and_rank[i-1][0] = v or jv
         # lvl_and_rank[i-1][1] = rank
         count = 3
+        # Keep track of all teams previously played. Penalize
+        # if we play the same team again. Reward if team has
+        # not been played yet. 
+        prev_played = []
         for x in individual:
             if count == 0:
                 break
@@ -156,6 +427,13 @@ def calc_fitness(individual):
                     else:
                         # Big trouble: Same team scheduled to play at same time, penalize
                         total_fit -= 50
+                    # Check if opponent was played before, if so penalize
+                    if y[1] in prev_played:
+                        total_fit -= 50
+                    # Store opponent if it's not 0, for which penalty has already been applied
+                    elif y[1] != 0:
+                        prev_played.append(y[1])
+                        total_fit += 5
                 elif y[1] == i:
                     # Determine level and rank of i and y[0]
                     if (lvl_and_rank[i-1][0] == lvl_and_rank[y[0]-1][0]):
@@ -194,9 +472,15 @@ def calc_fitness(individual):
                     else:
                         # Big trouble: Same team scheduled to play at same time, penalize
                         total_fit -= 50
+                    # Penalize if played before
+                    if y[0] in prev_played:
+                        total_fit -= 50
+                    # Store opponent if it's not 0, for which penalty has already been applied
+                    # Reward for unique matchup
+                    elif y[0] != 0:
+                        prev_played.append(y[1])
+                        total_fit += 5
     return total_fit,
-    # return 11,
-    # return sum(individual), 
     # Psuedocode: Iterate through all the teams and figure out
     # the fitness of each. Sum up total fitness to calculate the
     # final schedule fitness. Staying at same facility, having
@@ -221,14 +505,17 @@ def single_slot():
 def generate_schedule(population, team_list, conflict_list):
     # Create a reference to our population to easily edit it
     scheduled_pop = population
+    # Create global reference to conflict_list for CX access
+    global glo_conf_list
+    glo_conf_list = conflict_list
     # Indexes to our population are as follows:
     # pop[Individual][TimeSegment][Court][TeamSide]
     for h in range(pop_size):
         # Generate order of teams to populate schedule randomly
         team_order_list = random.sample(range(1,num_of_teams+1,1), k=num_of_teams)
-        print("Team Order List Is: ", team_order_list)
-        print("h is: ", h)
-        print("Conflict list: ", conflict_list)
+        # print("Team Order List Is: ", team_order_list)
+        # print("h is: ", h)
+        # print("Conflict list: ", conflict_list)
         # List to hold already scheduled teams for conflict
         already_scheduled = []
         # Helps us keep track of where to place teams
@@ -249,7 +536,7 @@ def generate_schedule(population, team_list, conflict_list):
                         else:
                             conflicting = match[0]
                 if (conflicting != 0):
-                    print("Conflict exists for team: ", team, " and is: ", conflicting)
+                    # print("Conflict exists for team: ", team, " and is: ", conflicting)
                     already_scheduled.append(team)
                     already_scheduled.append(conflicting)
                     # Schedule 3 games per conflicting team
@@ -287,7 +574,7 @@ def generate_schedule(population, team_list, conflict_list):
                                     pick_t_or_c = 1
                                     break
                 else:
-                    print("No conflict for team: ", team)
+                    # print("No conflict for team: ", team)
                     # No need to append to already_scheduled since singular
                     rem_mat_team = 3
                     for i in scheduled_pop[h]:
@@ -305,14 +592,9 @@ def generate_schedule(population, team_list, conflict_list):
                                 j[1] = team
                                 rem_mat_team -= 1
                                 break
-            else:
-                print("Team already scheduled: ", team)
+            # else:
+                # print("Team already scheduled: ", team)
     return scheduled_pop
-    # Psuedocode: pick a random team, and add them to a schedule.
-    # Do this in a loop until all teams are added to a schedule.
-    # Pick courts randomly, but start assigning the randomly picked
-    # team at the earliest time they can be scheduled to play and
-    # don't let them play back to back.
 
 ########################################################################
 # Repair a schedule. This will be run after CX or MUT, to turn the
@@ -324,7 +606,7 @@ def generate_schedule(population, team_list, conflict_list):
 ########################################################################
 def repair_schedule(schedule):
     return schedule
-    # Still working out the details...
+    # Was never used but could be helpful during expansion of program.
 
 ########################################################################
 # Main driver function.
@@ -451,7 +733,10 @@ def main():
     # slot, first court, and the first team scheduled for that court.
     generate_schedule(pop, teams_to_schedule, conflicting_teams)
     print("Initial population successfully generated")
-    print("Member 1: \n", pop[0])
+    print("Population Size: ", pop_size, "   Number of Generations: ", num_of_gens)
+    print("Mutation Prob: ", mutpb, "   Crossover Prob: ", cxpb)
+    print("BEGIN GENETIC ALGORITHM")
+    # print("Member 1: \n", pop[0])
     hof = tools.HallOfFame(1)
 
     # After everything has been set, register stats and run gen algo
@@ -466,8 +751,8 @@ def main():
 
     print("Best last iteration: \n", hof)
     print("Level and rank: \n", lvl_and_rank)
-    print("Our individual teams: ")
-    print(teams_to_schedule)
+    # print("Our individual teams: ")
+    # print(teams_to_schedule)
     return pop, log, hof
 
 if __name__ == "__main__":
